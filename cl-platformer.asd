@@ -7,7 +7,11 @@
   :description "A simple platformer game."
   :author "nonk123"
   :version "0.1"
-  :depends-on ("cl-glfw3")
+  :depends-on ("cl-opengl"
+               "cl-glfw3"
+               "3d-vectors"
+               "trivial-main-thread")
   :license "MIT License"
+  :serial t
   :components ((:file "package")
-               (:file "platformer" :depends-on ("package"))))
+               (:file "platformer")))

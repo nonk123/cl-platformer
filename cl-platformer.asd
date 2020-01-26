@@ -10,8 +10,10 @@
   :depends-on ("cl-opengl"
                "cl-glfw3"
                "3d-vectors"
+               "3d-matrices"
                "trivial-main-thread")
   :license "MIT License"
   :serial t
   :components ((:file "package")
+               (:file "utils")
                (:file "platformer")))

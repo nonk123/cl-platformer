@@ -27,43 +27,15 @@
     :initform "
 #version 330 core
 
-layout(location = 0) in vec2 pos;
+layout(location = 0) in vec4 pos;
 
 out vec4 vertexColor;
 
-uniform vec2 translation = vec2(0.0, 0.0);
-uniform float angle = 0.0;
-uniform vec2 scale = vec2(1.0, 1.0);
-
-uniform vec3 cameraPosition = vec3(0.0, 0.0, 0.0);
+uniform mat4 mvp = mat4(1.0);
 
 void main() {
-    mat4 translationMatrix = mat4(1.0);
-    translationMatrix[0][3] = translation.x;
-    translationMatrix[1][3] = translation.y;
-
-    mat4 rotationMatrix = mat4(1.0);
-    rotationMatrix[0].xy = vec2( cos(angle), sin(angle));
-    rotationMatrix[1].xy = vec2(-sin(angle), cos(angle));
-
-    mat4 scaleMatrix = mat4(1.0);
-    scaleMatrix[0][0] = scale.x;
-    scaleMatrix[1][1] = scale.y;
-
-    mat4 modelMatrix = translationMatrix * rotationMatrix * scaleMatrix;
-
-    mat4 viewMatrix = mat4(1.0);
-    viewMatrix[0][3] = -cameraPosition.x;
-    viewMatrix[1][3] = -cameraPosition.y;
-    viewMatrix[2][3] =  cameraPosition.z;
-
-    // TODO: implement.
-    mat4 projectionMatrix = mat4(1.0);
-
-    mat4 mvp = modelMatrix * viewMatrix * projectionMatrix;
-
+    gl_Position = mvp * pos;
     vertexColor = vec4(1.0, 0.5, 0.1, 1.0);
-    gl_Position = vec4(pos, 0.0, 1.0) * mvp;
 }
 ")
    (frag-shader
@@ -132,7 +104,7 @@ void main() {
 (defgeneric render (thing)
   (:documentation "Render a THING."))
 
-(defparameter *rectangle-vertices*
+(defparameter +rectangle-vertices+
   #(0.0 0.0
     1.0 0.0
     1.0 1.0
@@ -140,12 +112,19 @@ void main() {
 
 (defmethod render ((thing entity))
   (gl:use-program (shader-program +window+))
-  (gl:uniformf (gl:get-uniform-location (shader-program +window+) "translation")
-               (vx (pos  thing)) (vy (pos  thing)))
-  (gl:uniformf (gl:get-uniform-location (shader-program +window+) "scale")
-               (vx (size thing)) (vy (size thing)))
-  (gl:uniformf (gl:get-uniform-location (shader-program +window+) "cameraPosition")
-               (vx (pos +camera+)) (vy (pos +camera+)) (vz (pos +camera+)))
+  (gl:uniform-matrix-4fv
+   (gl:get-uniform-location (shader-program +window+) "mvp")
+   (marr
+    (let* ((ws (glfw:get-window-size))
+           (ar (/ (elt ws 0) (elt ws 1)))
+           (model
+            (m* (mscaling (size thing))
+                (mtranslation (pos thing))))
+           (view (mtranslation (v- (pos +camera+))))
+           (projection
+            (let* ((w 7) (h (/ w ar)))
+              (mortho (- w) w (- h) h 0.01 50))))
+      (m* view model projection))))
   (gl:draw-arrays :polygon 0 4))
 
 (defparameter +keys+ (list)
@@ -161,19 +140,22 @@ void main() {
   (when (is-held :q)
     (set-window-should-close))
 
-  (let* ((i 0.08) (-i (- i)))
+  (let* ((i 0.03) (-i (- i)))
     (setf (vel +camera+)
           (vec (cond
-                 ((is-held :a) -i)
                  ((is-held :d)  i)
-                 (t 0))
+                 ((is-held :a) -i)
+                 (t 0.0))
                (cond
                  ((is-held :w)  i)
                  ((is-held :s) -i)
-                 (t 0))
-               0)))
+                 (t 0.0))
+               (cond
+                 ((is-held :r)  i)
+                 ((is-held :f) -i)
+                 (t 0.0)))))
 
-  (setf (pos +camera+) (v+ (pos +camera+) (vel +camera+)))
+  (nv+ (pos +camera+) (vel +camera+))
 
   (loop for e in (entities +game+)
      do (render e))
@@ -189,9 +171,9 @@ void main() {
   (set-viewport w h))
 
 (defun init ()
-  (push (make-instance 'entity :pos (vec -0.1 0) :size (vec 0.2 0.8))
+  (push (make-instance 'entity :pos (vec 0.0  0.0) :size (vec 0.8 2.5))
         (entities +game+))
-  (push (make-instance 'entity :pos (vec -0.1 -1.8) :size (vec 0.2 0.2))
+  (push (make-instance 'entity :pos (vec 0.0 -0.3) :size (vec 0.8 0.8))
         (entities +game+)))
 
 (def-key-callback input (window key scancode action mod-keys)
@@ -200,7 +182,7 @@ void main() {
     ((eq action :press)
      (push key +keys+))
     ((eq action :release)
-     (delete key +keys+))))
+     (setq +keys+ (remove key +keys+)))))
 
 (defun check-shader-error (shader name)
   (let ((error-string (gl:get-shader-info-log shader)))
@@ -223,7 +205,7 @@ void main() {
   (setf (rectangle-vertex-array +window+) (gl:alloc-gl-array :float 8))
   (loop for i from 0 to 7
      do (setf (gl:glaref (rectangle-vertex-array +window+) i)
-              (elt *rectangle-vertices* i)))
+              (elt +rectangle-vertices+ i)))
 
   (setf (rectangle-vao +window+) (gl:gen-vertex-array))
   (gl:bind-vertex-array (rectangle-vao +window+))
@@ -262,8 +244,7 @@ void main() {
   (setf (frag-shader +window+) nil)
   (setq +keys+ (list))
   (setf (vel +camera+) (vec 0 0 0))
-  (setf (pos +camera+) (vec 0 0 0))
-  nil)
+  (setf (pos +camera+) (vec 0 0 0)))
 
 (defun run ()
   (let ((w 800) (h 600))
@@ -283,4 +264,5 @@ void main() {
   (init)
   (if +run-in-main-thread+
       (with-body-in-main-thread () (run))
-      (run)))
+      (run))
+  nil)

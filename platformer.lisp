@@ -32,10 +32,11 @@ layout(location = 0) in vec4 pos;
 out vec4 vertexColor;
 
 uniform mat4 mvp = mat4(1.0);
+uniform vec4 color = vec4(0.0, 0.0, 0.0, 0.0);
 
 void main() {
     gl_Position = mvp * pos;
-    vertexColor = vec4(1.0, 0.5, 0.1, 1.0);
+    vertexColor = color;
 }
 ")
    (frag-shader
@@ -57,7 +58,7 @@ void main() {
 }
 ")))
 
-(defparameter +window+ (make-instance 'window))
+(defvar +window+ (make-instance 'window))
 
 (defclass entity ()
   ((pos
@@ -71,77 +72,70 @@ void main() {
    (vel
     :initarg :vel
     :accessor vel
-    :initform (vec 0 0))))
+    :initform (vec 0 0))
+   (col
+    :initarg :col
+    :accessor col
+    :initform (vec 1.0 0.5 0.1))))
 
 (defclass game ()
-  ((entities
-    :initarg entities
+  ((keys
+    :initarg :keys
+    :accessor keys
+    :initform (list))
+   (entities
+    :initarg :entities
     :accessor entities
     :initform (list))))
 
-(defparameter +game+ (make-instance 'game))
+(defvar +game+ (make-instance 'game))
 
 (defclass camera ()
   ((pos
     :initarg :pos
     :accessor pos
-    :initform (vec 0 0 0))
+    :initform (vec 0 0 10))
    (vel
     :initarg :vel
     :accessor vel
     :initform (vec 0 0 0))))
 
-(defparameter +camera+ (make-instance 'camera))
+(defvar +camera+ (make-instance 'camera))
 
-(defgeneric entity= (a b)
-  (:documentation "Determine if entities A and B are equal."))
+(defun is-held (key)
+  (member key (keys +game+)))
 
-(defmethod entity= ((a entity) (b entity))
+(defun entity= (a b)
   (and (v= (pos  a) (pos  b))
        (v= (size a) (size b))
        (v= (vel  a) (vel  b))))
 
-(defgeneric render (thing)
-  (:documentation "Render a THING."))
+(defun entity/= (a b)
+  (not (entity= a b)))
 
-(defparameter +rectangle-vertices+
-  #(0.0 0.0
-    1.0 0.0
-    1.0 1.0
-    0.0 1.0))
+(defun collide (a b)
+  (rect-in (pos a) (size a) (pos b) (size b)))
 
-(defmethod render ((thing entity))
-  (gl:use-program (shader-program +window+))
-  (gl:uniform-matrix-4fv
-   (gl:get-uniform-location (shader-program +window+) "mvp")
-   (marr
-    (let* ((ws (glfw:get-window-size))
-           (ar (/ (elt ws 0) (elt ws 1)))
-           (model
-            (m* (mscaling (size thing))
-                (mtranslation (pos thing))))
-           (view (mtranslation (v- (pos +camera+))))
-           (projection
-            (let* ((w 7) (h (/ w ar)))
-              (mortho (- w) w (- h) h 0.01 50))))
-      (m* view model projection))))
-  (gl:draw-arrays :polygon 0 4))
+(defun collide-all (a)
+  (let ((result nil))
+    (dolist (e (entities +game+) result)
+      (let ((c (collide a e)))
+        (when (and (entity/= a e) c)
+          (progn
+            (setq result c)
+            (return)))))
+    result))
 
-(defparameter +keys+ (list)
-  "List of held keys.")
+(defgeneric update (thing)
+  (:documentation "Update a THING."))
 
-(defun is-held (key)
-  (member key +keys+))
+(defmethod update ((thing entity))
+  (when (collide-all thing)
+    (setf (col thing) (vec 1.0 0.0 0.0))))
 
-(defun tick ()
-  (gl:clear-color 0.1 0.1 0.1 0)
-  (gl:clear :color-buffer :depth-buffer)
-
-  (when (is-held :q)
-    (set-window-should-close))
-
-  (let* ((i 0.03) (-i (- i)))
-    (setf (vel +camera+)
+(defmethod update ((thing camera))
+  (let* ((i 0.1) (-i (- i)))
+    (setf (vel thing)
           (vec (cond
                  ((is-held :d)  i)
                  ((is-held :a) -i)
@@ -151,13 +145,52 @@ void main() {
                  ((is-held :s) -i)
                  (t 0.0))
                (cond
-                 ((is-held :r)  i)
-                 ((is-held :f) -i)
+                 ((is-held :r) -i)
+                 ((is-held :f)  i)
                  (t 0.0)))))
+  (nv+ (pos thing) (vel thing)))
 
-  (nv+ (pos +camera+) (vel +camera+))
+(defgeneric render (thing)
+  (:documentation "Render a THING."))
+
+(defmethod render ((thing entity))
+  (gl:use-program (shader-program +window+))
+  (gl:uniformf
+   (gl:get-uniform-location (shader-program +window+) "color")
+   (vx (col thing))
+   (vy (col thing))
+   (vz (col thing))
+   0)
+  (gl:uniform-matrix-4fv
+   (gl:get-uniform-location (shader-program +window+) "mvp")
+   (marr
+    (let* ((ws (glfw:get-window-size))
+           (ar (/ (elt ws 0) (elt ws 1)))
+           (model
+            (m* (mtranslation (pos thing))
+                (mscaling (size thing))))
+           (view (mtranslation (v- (pos +camera+))))
+           (projection (mperspective 90 ar 0.01 100)))
+      (m* projection view model))))
+  (gl:draw-arrays :polygon 0 4))
+
+(defparameter +rectangle-vertices+
+  #(0.0 0.0
+    1.0 0.0
+    1.0 1.0
+    0.0 1.0))
+
+(defun tick ()
+  (gl:clear-color 0.1 0.1 0.1 0)
+  (gl:clear :color-buffer :depth-buffer)
+
+  (when (or (is-held :q) (is-held :escape))
+    (set-window-should-close))
+
+  (update +camera+)
 
   (loop for e in (entities +game+)
+     do (update e)
      do (render e))
 
   (swap-buffers)
@@ -171,18 +204,27 @@ void main() {
   (set-viewport w h))
 
 (defun init ()
-  (push (make-instance 'entity :pos (vec 0.0  0.0) :size (vec 0.8 2.5))
-        (entities +game+))
-  (push (make-instance 'entity :pos (vec 0.0 -0.3) :size (vec 0.8 0.8))
-        (entities +game+)))
+  (dotimes (i 10)
+    (let* ((r 20.0)
+           (s 1.5)
+           (x (random r))
+           (y (random r))
+           (w (random s))
+           (h (random s)))
+      (push (make-instance 'entity
+                           :pos (vec  (- (/ r 2) x)
+                                      (- (/ r 2) y))
+                           :size (vec (+ 1.0 w)
+                                      (+ 1.0 h)))
+            (entities +game+)))))
 
 (def-key-callback input (window key scancode action mod-keys)
   (declare (ignore window scancode mod-keys))
   (cond
     ((eq action :press)
-     (push key +keys+))
+     (push key (keys +game+)))
     ((eq action :release)
-     (setq +keys+ (remove key +keys+)))))
+     (setf (keys +game+) (remove key (keys +game+))))))
 
 (defun check-shader-error (shader name)
   (let ((error-string (gl:get-shader-info-log shader)))
@@ -239,12 +281,9 @@ void main() {
   (gl:delete-program (shader-program +window+))
   (gl:delete-shader (vert-shader +window+))
   (gl:delete-shader (frag-shader +window+))
-  (setf (shader-program +window+) nil)
-  (setf (vert-shader +window+) nil)
-  (setf (frag-shader +window+) nil)
-  (setq +keys+ (list))
-  (setf (vel +camera+) (vec 0 0 0))
-  (setf (pos +camera+) (vec 0 0 0)))
+  (setq +window+ (make-instance 'window))
+  (setq +game+ (make-instance 'game))
+  (setq +camera+ (make-instance 'camera)))
 
 (defun run ()
   (let ((w 800) (h 600))
@@ -257,7 +296,7 @@ void main() {
          do (tick))
       (cleanup))))
 
-(defparameter +run-in-main-thread+ nil
+(defvar +run-in-main-thread+ nil
   "t if the application must run in the main thread.")
 
 (defun main ()
